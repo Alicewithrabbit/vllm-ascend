@@ -28,6 +28,15 @@ from typing import Any
 # begin-env-vars-definition
 
 env_variables: dict[str, Callable[[], Any]] = {
+    # Startup-only AVSG Host provider and execution mode.
+    # Not sensitive. legacy (default), omnicache (consumer), omnicache-decode
+    # (batched replay), omnicache-direct (ASVG graph execution),
+    # omnicache-glm (GLM native STORE rollback), omnicache-glm-direct
+    # (GLM direct Host main writes with bounded MTP scratch), avsg-owned
+    # (capability-selected DSA execution; previous model-specific names remain aliases), avsg-owned-glm
+    # (native APC with ASVG-owned Host pages/execution). Non-sensitive.
+    # Restart workers to change; legacy imports no external AVSG.
+    "VLLM_ASCEND_AVSG_HOST_PROVIDER": lambda: os.getenv("VLLM_ASCEND_AVSG_HOST_PROVIDER", "legacy"),
     # max compile thread number for package building. Usually, it is set to
     # the number of CPU cores. If not set, the default value is None, which
     # means all number of CPU cores will be used.

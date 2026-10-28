@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from typing import Any
+from functools import partial
 
 import torch
 from vllm.config import CUDAGraphMode, VllmConfig, get_layers_from_vllm_config
@@ -12,6 +13,7 @@ from vllm.v1.worker.utils import AttentionGroup
 
 from vllm_ascend.ascend_forward_context import set_ascend_forward_context
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
+from vllm_ascend import envs as ascend_envs
 from vllm_ascend.ops.triton.spec_decode.utils import copy_and_expand_dflash_and_dspark_inputs_kernel_single_grid
 from vllm_ascend.spec_decode.dflash_proposer import AscendDflashProposer
 
@@ -351,7 +353,7 @@ class AscendDSparkProposer(AscendDflashProposer):
 
             else:
                 self._dflash_num_context = num_input_tokens
-                self._runnable(
+                run_dummy = partial(self._runnable,
                     num_input_tokens=num_input_tokens,
                     batch_size=num_reqs,
                     token_indices_to_sample=self.token_indices_to_sample[: num_reqs * self.num_speculative_tokens],
@@ -360,3 +362,8 @@ class AscendDSparkProposer(AscendDflashProposer):
                     multi_steps_attn_metadata=[],
                     num_tokens=num_input_tokens,
                 )
+                if ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER in ("avsg-owned", "avsg-owned-dsv4"):
+                    from avsg.providers.owned_dsv4_runner import dummy_forward
+                    dummy_forward(self, run_dummy)
+                else:
+                    run_dummy()

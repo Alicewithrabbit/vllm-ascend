@@ -28,6 +28,14 @@
 
 # What's Patched and how it works:
 # --------------------------------
+# Startup bridge: patch_avsg_host_provider.py is selected by register_connector
+# when VLLM_ASCEND_AVSG_HOST_PROVIDER selects omnicache, omnicache-decode,
+# omnicache-direct or omnicache-glm (legacy is the default).
+# It delegates checked DSv4 consumer or GLM scheduler hooks to external AVSG
+# without loading the worker patch package.
+# Core still owns Host allocation, readiness, STORE publication and retirement.
+# This temporary bridge can be removed when an explicit consumer factory exists.
+#
 # * Platform Patch:
 # =================
 # Entries are listed in alphabetical order by file name.

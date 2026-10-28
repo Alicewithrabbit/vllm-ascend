@@ -1,0 +1,20 @@
+{
+  "native_base": "73953fc05401783b8da544cabe2e8280d4f1c1cf",
+  "avsg_commit": "aadcf220e428dbdc88e66b6375136a98468d4de5",
+  "avsg_published": false,
+  "avsg_fingerprint": "c625416be8ccbe846059adf6f59bf7b9beb7a56d9567f8f5d19445a0515e4e20",
+  "source_sha256": {
+    "vllm_ascend/__init__.py": "4dbfbd387403c95635970c6b3eeaabf9a02321430e3e2279179fa6365d82347f",
+    "vllm_ascend/attention/avsg_glm.py": "b78c0d5071d8bfe6c8bc293cb50cba7b63c6b09338c0cfbfde5e6ddf37f44ba4",
+    "vllm_ascend/attention/dsa_v1.py": "9bae0cc54b57d9cf07f22046c60d83bcb43b6ce8291604ea3c42001ef1b6ffd6",
+    "vllm_ascend/attention/sfa_v1.py": "60373e154ca1548c7de9ec33ba124ccb779ac6f3c04c87f650e22dbbd718d782",
+    "vllm_ascend/envs.py": "678c4631ab6287c857076451bd863c006ce09e0795d57716711513da5505e505",
+    "vllm_ascend/patch/__init__.py": "d1d49206a1add0fe5c93ee2815fa928e5ee2f7c024a6d7cb12bb06e95c16375b",
+    "vllm_ascend/patch/patch_avsg_host_provider.py": "30b9d7649e157ae950491e7615f2232968aa9a65e1045e45f0a80c8ba0bcf45e",
+    "vllm_ascend/spec_decode/dspark_proposer.py": "9e1379314498bc843af40e6c1bcaf3a0723e00985bc6926109c3bf0803235817",
+    "vllm_ascend/spec_decode/llm_base_proposer.py": "24487d00834056238cc9567c1e211c33b93c135e848f6436a00fd3167175bd4a",
+    "vllm_ascend/worker/model_runner_v1.py": "4cfc614a03da1afbb85024fbd73966928fc24cbe2cd71b1c216b3c9724b17bc7"
+  },
+  "image_id": "b82ce4047e6cc63ec034528599462a5bd7bac7bb8166e82f2bd79d06a2c9de7b",
+  "external_scatter_source_sha256": "c4f20b5f45d302dfd1c5891ad31a9085d589c20b330c03f89255962f01251f2d"
+}

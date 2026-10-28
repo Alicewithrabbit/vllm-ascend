@@ -1530,6 +1530,15 @@ class AscendSFAImpl(MLAAttentionImpl):
     def _execute_sparse_flash_attention_process(
         self, ql_nope, q_pe, kv_cache, topk_indices, attn_metadata, actual_seq_lengths_query, actual_seq_lengths_key
     ):
+        decode = getattr(attn_metadata, "avsg_decode", None)
+        if decode is None:
+            draft = getattr(attn_metadata, "avsg_mtp", None)
+            if getattr(draft, "avsg_attention", False):
+                decode = draft
+        if decode is not None:
+            from vllm_ascend.attention.avsg_glm import execute_glm_attention
+
+            return execute_glm_attention(self, decode, ql_nope, q_pe, kv_cache, topk_indices, attn_metadata)
         return DeviceOperator.execute_sparse_flash_attention_process(
             self,
             ql_nope,
@@ -1717,7 +1726,16 @@ class AscendSFAImpl(MLAAttentionImpl):
         self,
         attn_metadata: M,
     ) -> torch.Tensor:
-        return attn_metadata.slot_mapping
+        scope = getattr(attn_metadata, "avsg_decode", None)
+        if scope is None:
+            scope = getattr(attn_metadata, "avsg_mtp", None)
+        slots = getattr(scope, "slot_mapping", None)
+        if slots is None:
+            return attn_metadata.slot_mapping
+        if (slots.shape != attn_metadata.slot_mapping.shape or slots.dtype != torch.int64
+                or slots.device != attn_metadata.slot_mapping.device):
+            raise ValueError("GLM main slots differ from the current query geometry")
+        return slots
 
     def _compose_sfa_kv_cache(self, kv_cache) -> tuple[torch.Tensor, ...] | None:
         """Compose split cache handles into the tuple expected by SFA kernels.
@@ -1788,9 +1806,25 @@ class AscendSFAImpl(MLAAttentionImpl):
             # Profiling run.
             return output.fill_(0)
 
+        decode = getattr(attn_metadata, "avsg_decode", None)
+        if decode is not None:
+            decode.prepare(layer_name)
+        draft = getattr(attn_metadata, "avsg_mtp", None)
+        if draft is not None and decode is not None:
+            raise RuntimeError("GLM target and MTP cannot own the same attention call")
+        # Direct eager batches retain the same KV dependencies as graph batches.
+        managed_kv = (
+            getattr(decode, "graph_mode", False)
+            or getattr(decode, "main_writes", None) is not None
+            or draft is not None
+        )
         composed_kv_cache = self._compose_sfa_kv_cache(kv_cache)
         assert composed_kv_cache is not None
         kv_cache = composed_kv_cache
+        if draft is not None:
+            replacement = draft.prepare(layer_name, kv_cache)
+            if replacement is not None:
+                kv_cache = replacement
 
         cos = attn_metadata.cos
         sin = attn_metadata.sin
@@ -1835,31 +1869,37 @@ class AscendSFAImpl(MLAAttentionImpl):
                     hidden_states.contiguous(), need_gather_q_kv
                 )
             if fused_type == PreprocessType.PROLOG_V3:
-                assert slot_mapping.numel() == hidden_states.shape[0], (
+                assert slot_mapping_sfa.numel() == hidden_states.shape[0], (
                     "SFA Prolog V3 requires one cache index per input token, "
-                    f"got token_x={hidden_states.shape[0]} and cache_index={slot_mapping.numel()}."
+                    f"got token_x={hidden_states.shape[0]} and cache_index={slot_mapping_sfa.numel()}."
                 )
             if self.has_indexer:
                 k_li, k_li_scale = self.indexer_select_pre_process(x=hidden_states, cos=cos, sin=sin)
             else:
                 k_li, k_li_scale = None, None
-            wait_for_kv_layer_from_connector(layer_name)
+            if not managed_kv:
+                wait_for_kv_layer_from_connector(layer_name)
 
             if fused_type == PreprocessType.PROLOG_V3:
-                hidden_states, ql_nope, q_pe, q_c = self._sfa_preprocess_prolog_v3(
+                prolog_inputs = dict(
                     hidden_states=hidden_states,
                     kv_cache=kv_cache,
                     cos=cos,
                     sin=sin,
-                    slot_mapping=slot_mapping,
+                    slot_mapping=slot_mapping_sfa,
                 )
+                if self.use_sparse_c8_sfa and getattr(decode, "preprocess", None) is not None:
+                    result = decode.preprocess(layer_name, self._sfa_preprocess_prolog_v3, **prolog_inputs)
+                else:
+                    result = self._sfa_preprocess_prolog_v3(**prolog_inputs)
+                hidden_states, ql_nope, q_pe, q_c = result
             else:
                 hidden_states, ql_nope, q_pe, q_c = self._sfa_preprocess_mlapo(
                     hidden_states=hidden_states,
                     kv_cache=kv_cache,
                     cos=cos,
                     sin=sin,
-                    slot_mapping=slot_mapping,
+                    slot_mapping=slot_mapping_sfa,
                     num_input_tokens=num_input_tokens,
                 )
         # native
@@ -1886,14 +1926,21 @@ class AscendSFAImpl(MLAAttentionImpl):
             else:
                 k_li, k_li_scale = None, None
 
-            wait_for_kv_layer_from_connector(layer_name)
+            if not managed_kv:
+                wait_for_kv_layer_from_connector(layer_name)
 
             if self.enable_dsa_cp:
                 assert slot_mapping_cp is not None
                 kv_slots = slot_mapping_cp
             else:
                 kv_slots = slot_mapping_sfa
-            kv_outputs = self.exec_kv(kv_no_split, cos, sin, kv_cache, kv_slots, attn_metadata)
+            if not self.use_sparse_c8_sfa and getattr(decode, "preprocess", None) is not None:
+                kv_outputs = decode.preprocess(
+                    layer_name, self.exec_kv, kv_no_split=kv_no_split, cos=cos, sin=sin,
+                    kv_cache=kv_cache, slots=kv_slots, attn_metadata=attn_metadata,
+                )
+            else:
+                kv_outputs = self.exec_kv(kv_no_split, cos, sin, kv_cache, kv_slots, attn_metadata)
             k_pe, k_nope = kv_outputs[:2]
             knope_scale = kv_outputs[2] if len(kv_outputs) == 3 else None
             k_li, k_li_scale, fused_kv_no_split, kv_ag_handle = self._maybe_gather_kv_for_dsacp(
@@ -1977,7 +2024,8 @@ class AscendSFAImpl(MLAAttentionImpl):
                             slot_mapping.view(-1, 1),
                             k_li_scale.view(-1, k_li_scale.shape[-1]),
                         )
-            notify_kv_cache_written(self.layer_name or "")
+            if not managed_kv:
+                notify_kv_cache_written(self.layer_name or "")
 
         if self.enable_dsa_cp and attn_metadata.dsa_cp_context is not None:
             topk_num_tokens = attn_metadata.dsa_cp_context.local_end_with_pad - attn_metadata.dsa_cp_context.local_start
@@ -2028,13 +2076,15 @@ class AscendSFAImpl(MLAAttentionImpl):
             if not require_o_proj_forward:
                 # The full-weight prefill path completes o_proj internally,
                 # but a pure P node must still publish this layer's KV cache.
-                maybe_save_kv_layer_to_connector(layer_name, list(kv_cache))
+                if not managed_kv:
+                    maybe_save_kv_layer_to_connector(layer_name, list(kv_cache))
                 return result
             attn_output = result
 
         output[...] = self.o_proj(attn_output)[0]
 
-        maybe_save_kv_layer_to_connector(layer_name, list(kv_cache))
+        if not managed_kv:
+            maybe_save_kv_layer_to_connector(layer_name, list(kv_cache))
 
         return output_padded
 

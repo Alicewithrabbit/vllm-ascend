@@ -50,6 +50,13 @@ def register_connector():
     register_connector()
     register_engine()
 
+    from vllm_ascend import envs
+
+    if envs.VLLM_ASCEND_AVSG_HOST_PROVIDER != "legacy":
+        from vllm_ascend.patch.patch_avsg_host_provider import install
+
+        install()
+
 
 def register_model_loader():
     _ensure_global_patch()
