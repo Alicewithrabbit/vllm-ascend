@@ -10,14 +10,18 @@ Drain requests and restart workers to change modes.
 
 Native base: 73953fc05 (v0.25.1rc source from the frozen image).
 Paired AVSG repository: https://gitee.com/arepse/ASVG.git
-Paired AVSG commit: aadcf220e428dbdc88e66b6375136a98468d4de5 (published).
-AVSG branch: dsa-unified-pre-row-20261028
-AVSG fingerprint: c625416be8ccbe846059adf6f59bf7b9beb7a56d9567f8f5d19445a0515e4e20
+Paired AVSG commit: 36785ad26f9c4845d8afe03425413c3296960340 (published).
+AVSG branch: dsa-physical-pool-primitives
+AVSG fingerprint: 0e925f2ce7811497994f2d7662d93ca8556a91d63baa74a2d1ee87ac3782da71
 
 Service admission requires block128. C4 BF16 supports TopK512 and up to eight
 queries; uncompressed C8/BF16 supports TopK2048 and up to four queries.
-Frozen OmniCache layout/physical-storage/OX primitives, AVSG operators and
-matching image libraries are also required. This is not a deployment bundle.
+OmniCache uses clean base 4312748 plus standalone physical-pool PR80:
+https://gitee.com/zhenhaosun_b078/omni-cache/pulls/80
+Pinned commit: 3a0e0cfbd6a5e0d4cf50dd6dd201d2785f89a979.
+Old coupled PR71/72/74/75/76/77 are not prerequisites for the owned path.
+AVSG operators and matching image libraries remain required.
+This is not a deployment bundle.
 The tested DSv4 block128 scatter correction is a separate local operator patch
 and is intentionally excluded. See avsg-source-lock.json for hashes.
 Keep exact source bytes because the external runtime checks native versions.
@@ -32,3 +36,9 @@ Keep exact source bytes because the external runtime checks native versions.
   previous service results belong to the preceding runtime snapshot.
 - The later stable-row-index optimization and its pending validation are
   excluded. No OmniCache product changes or service restarts are included.
+
+The standalone dependency extraction passed 32 unit tests and 80 selected
+AVSG integration tests on A2 CPU (three known fixture-dependent tests were
+excluded). Retained primitive definitions are AST-identical to the earlier
+implementation. Full model/NPU graph retesting of this clean-backend pairing
+is pending. The prior snapshot remains available for rollback.

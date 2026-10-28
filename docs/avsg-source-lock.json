@@ -1,8 +1,8 @@
 {
   "native_base": "73953fc05401783b8da544cabe2e8280d4f1c1cf",
-  "avsg_commit": "aadcf220e428dbdc88e66b6375136a98468d4de5",
+  "avsg_commit": "36785ad26f9c4845d8afe03425413c3296960340",
   "avsg_published": true,
-  "avsg_fingerprint": "c625416be8ccbe846059adf6f59bf7b9beb7a56d9567f8f5d19445a0515e4e20",
+  "avsg_fingerprint": "0e925f2ce7811497994f2d7662d93ca8556a91d63baa74a2d1ee87ac3782da71",
   "source_sha256": {
     "vllm_ascend/__init__.py": "4dbfbd387403c95635970c6b3eeaabf9a02321430e3e2279179fa6365d82347f",
     "vllm_ascend/attention/avsg_glm.py": "b78c0d5071d8bfe6c8bc293cb50cba7b63c6b09338c0cfbfde5e6ddf37f44ba4",
@@ -17,5 +17,10 @@
   },
   "image_id": "b82ce4047e6cc63ec034528599462a5bd7bac7bb8166e82f2bd79d06a2c9de7b",
   "external_scatter_source_sha256": "c4f20b5f45d302dfd1c5891ad31a9085d589c20b330c03f89255962f01251f2d",
-  "avsg_branch": "dsa-unified-pre-row-20261028"
+  "avsg_branch": "dsa-physical-pool-primitives",
+  "omnicache_base": "4312748c1dd20d63178839fc7793bc31f4f2a0db",
+  "omnicache_commit": "3a0e0cfbd6a5e0d4cf50dd6dd201d2785f89a979",
+  "omnicache_pr": "https://gitee.com/zhenhaosun_b078/omni-cache/pulls/80",
+  "omnicache_source_repository": "https://gitee.com/arepse/omni-cache_1.git",
+  "omnicache_branch": "v2-physical-pool-primitives"
 }
