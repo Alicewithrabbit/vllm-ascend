@@ -10,7 +10,8 @@ Drain requests and restart workers to change modes.
 
 Native base: 73953fc05 (v0.25.1rc source from the frozen image).
 Paired AVSG repository: https://gitee.com/arepse/ASVG.git
-Paired AVSG commit: aadcf220e428dbdc88e66b6375136a98468d4de5 (prepared locally, not yet pushed).
+Paired AVSG commit: aadcf220e428dbdc88e66b6375136a98468d4de5 (published).
+AVSG branch: dsa-unified-pre-row-20261028
 AVSG fingerprint: c625416be8ccbe846059adf6f59bf7b9beb7a56d9567f8f5d19445a0515e4e20
 
 Service admission requires block128. C4 BF16 supports TopK512 and up to eight

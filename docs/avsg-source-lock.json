@@ -1,7 +1,7 @@
 {
   "native_base": "73953fc05401783b8da544cabe2e8280d4f1c1cf",
   "avsg_commit": "aadcf220e428dbdc88e66b6375136a98468d4de5",
-  "avsg_published": false,
+  "avsg_published": true,
   "avsg_fingerprint": "c625416be8ccbe846059adf6f59bf7b9beb7a56d9567f8f5d19445a0515e4e20",
   "source_sha256": {
     "vllm_ascend/__init__.py": "4dbfbd387403c95635970c6b3eeaabf9a02321430e3e2279179fa6365d82347f",
@@ -16,5 +16,6 @@
     "vllm_ascend/worker/model_runner_v1.py": "4cfc614a03da1afbb85024fbd73966928fc24cbe2cd71b1c216b3c9724b17bc7"
   },
   "image_id": "b82ce4047e6cc63ec034528599462a5bd7bac7bb8166e82f2bd79d06a2c9de7b",
-  "external_scatter_source_sha256": "c4f20b5f45d302dfd1c5891ad31a9085d589c20b330c03f89255962f01251f2d"
+  "external_scatter_source_sha256": "c4f20b5f45d302dfd1c5891ad31a9085d589c20b330c03f89255962f01251f2d",
+  "avsg_branch": "dsa-unified-pre-row-20261028"
 }
