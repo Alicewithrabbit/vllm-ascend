@@ -205,3 +205,50 @@ def test_explicit_pd_layout_requires_exact_native_main_coverage(tmp_path, compre
     finally:
         gc.collect()
         mapping.close()
+
+@pytest.mark.parametrize("compression", [1, 4])
+def test_main_binding_retains_aliases_and_native_containers(compression):
+    from types import SimpleNamespace as NS
+    from vllm_ascend.kv_offload.avsg_host import bind_main_caches
+    main, rope, indexer = (torch.zeros(2, 4) for _ in range(3))
+    layers = (NS(name="packed", view=main, rope=None),
+              NS(name="split", view=main, rope=rope))
+    views = NS(profile=NS(compression=compression), layers=lambda: layers)
+    resident = {"indexer": (indexer,)}
+    caches = bind_main_caches(views, resident)
+    assert type(caches["packed"]) is (list if compression == 4 else tuple)
+    assert caches["packed"][0] is main
+    assert caches["split"][0] is main and caches["split"][1] is rope
+    assert caches["indexer"] is resident["indexer"]
+    with pytest.raises(ValueError, match="overlap"):
+        bind_main_caches(views, {"packed": (indexer,)})
+
+
+def test_resident_zero_views_preserve_domains_shared_backing_and_padding():
+    from vllm_ascend.kv_offload.avsg_host import resident_zero_views
+    first, second = torch.full((4, 32), 17, dtype=torch.int8), torch.full((2, 48), 29, dtype=torch.int8)
+    raw = {"a": first, "shared": first, "b": (second,)}
+    views = resident_zero_views(raw, (("a", "shared"), ("b",)), (4, 2))
+    assert len(views[0]) == len(views[1]) == 1
+    assert views[0][0].data_ptr() == first.data_ptr()
+    assert views[1][0].data_ptr() == second.data_ptr()
+    views[0][0][2].zero_()
+    assert torch.all(first[2] == 0)
+    assert torch.all(first[[0, 1, 3]] == 17)
+    assert torch.all(second == 29)
+    # Zero the complete original row, including padding and scale bytes.
+    views[1][0][1].zero_()
+    assert torch.all(second[1] == 0) and torch.all(second[0] == 29)
+
+
+@pytest.mark.parametrize("raw", [
+    torch.ones(16, dtype=torch.float32),
+    torch.ones(4, 8, dtype=torch.int8)[:, ::2],
+    torch.ones(15, dtype=torch.int8),
+])
+def test_resident_zero_views_reject_invalid_raw_before_writing(raw):
+    from vllm_ascend.kv_offload.avsg_host import resident_zero_views
+    good = torch.full((4, 16), 23, dtype=torch.int8)
+    with pytest.raises(ValueError, match="aligned"):
+        resident_zero_views({"good": good, "bad": raw}, (("good", "bad"),), (4,))
+    assert torch.all(good == 23)

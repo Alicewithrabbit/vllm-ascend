@@ -148,9 +148,12 @@ class NativeAdmission:
     def _plan(self, counts, headroom):
         needed = list(headroom[0])
         host_needed = [0] * len(self._host_pools)
+        # Sparse COW demand must preserve progress space for every Host group.
+        for group, reserve in enumerate(headroom[1]):
+            host_needed[self._host_domains[group]] += reserve
         for group, count in counts.items():
             needed[self.pages.group_domains[group]] += count
-            host_needed[self._host_domains[group]] += count + headroom[1][group]
+            host_needed[self._host_domains[group]] += count
         free = list(self.pages.available)
         host_free = [pool.available for pool in self._host_pools]
 

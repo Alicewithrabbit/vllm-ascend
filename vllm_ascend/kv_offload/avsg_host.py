@@ -23,7 +23,8 @@ from vllm_ascend.core.kv_cache_interface import (
 )
 
 
-def main_kv_specs(kv_config, profile):
+def main_kv_specs(kv_config, profile, *, service=True):
+    """Parse native layouts; component-only callers retain block32 experiments."""
     if profile not in (C4_PROFILE, UNCOMPRESSED_PROFILE):
         raise ValueError("Unsupported DSA capabilities")
     selected, names = [], set()
@@ -54,7 +55,10 @@ def main_kv_specs(kv_config, profile):
                             or spec.scale_dim != 1 or spec.scale_dtype != torch.float16
                             or spec.cache_sparse_c8):
                         raise ValueError("Unsupported compressed indexer byte layout")
-                    profile.require_service_block(spec.block_size)
+                    if service:
+                        profile.require_service_block(spec.block_size)
+                    else:
+                        profile.require_layout("bf16_512", spec.block_size)
                     continue  # The native compressed indexer remains resident.
                 layout, width, dtype, c8 = "bf16_512", 512, torch.bfloat16, False
             elif ratio == 1:
@@ -155,6 +159,37 @@ def prepare_native_storage(runner, kv_config, profile, mapping, pages, *, layout
     return NativeMainStorage(runner, kv_config, profile, mapping, pages, layouts=layouts)
 
 
+def bind_main_caches(views, resident):
+    """Bind canonical Host aliases using the native attention containers."""
+    caches = {}
+    for layer in views.layers():
+        parts = (layer.view,) if layer.rope is None else (layer.view, layer.rope)
+        caches[layer.name] = list(parts) if views.profile.compression == 4 else parts
+    if caches.keys() & resident.keys():
+        raise ValueError("Main and resident layers overlap")
+    caches.update(resident)
+    return caches
+
+
+def resident_zero_views(raw, groups, capacities):
+    """Alias complete resident byte rows, including scales and padding."""
+    result = []
+    for names, capacity in zip(groups, capacities, strict=True):
+        seen, views = set(), []
+        for name in names:
+            components = (raw[name],) if isinstance(raw[name], torch.Tensor) else raw[name]
+            for tensor in components:
+                if (not isinstance(tensor, torch.Tensor) or tensor.dtype != torch.int8
+                        or not tensor.is_contiguous() or tensor.numel() % (capacity * 4)):
+                    raise ValueError("Resident backing must contain aligned native byte rows")
+                key = tensor.data_ptr(), tensor.numel()
+                if key not in seen:
+                    seen.add(key)
+                    views.append(tensor.reshape(capacity, -1).view(torch.int32))
+        result.append(tuple(views))
+    return tuple(result)
+
+
 def zero_resident_rows(pages, logical_ids, views, device, *, by_group=False):
     """Resolve all rows before submitting zeroing; never touch Host aliases."""
     selected = [[] for _ in views]
@@ -225,34 +260,14 @@ class NativeMainStorage:
             self.resident = self._reshape(self.projected, raw)
         finally:
             self.runner.runner_only_attn_layers = skipped
-        caches = {}
-        for layer in self.views.layers():
-            components = (layer.view,) if layer.rope is None else (layer.view, layer.rope)
-            caches[layer.name] = list(components) if self.profile.compression == 4 else components
-        if caches.keys() & self.resident.keys():
-            raise ValueError("Native main and resident layers overlap")
-        caches.update(self.resident)
-        return caches
+        return bind_main_caches(self.views, self.resident)
 
     def init_zero(self):
         if self._raw is None or not self.resident or self._zero_views is not None:
             raise RuntimeError("Initialize native zeroing once after cache binding")
-        capacity = self.pages.logical_capacity
-        groups = []
-        for group in self.projected.kv_cache_groups:
-            seen, views = set(), []
-            for name in group.layer_names:
-                raw = self._raw[name]
-                components = (raw,) if isinstance(raw, torch.Tensor) else raw
-                for tensor in components:
-                    if (tensor.dtype != torch.int8 or not tensor.is_contiguous()
-                            or tensor.numel() % (capacity * 4)):
-                        raise ValueError("Native resident backing must contain aligned byte rows")
-                    if tensor.data_ptr() not in seen:
-                        seen.add(tensor.data_ptr())
-                        views.append(tensor.reshape(capacity, -1).view(torch.int32))
-            groups.append(tuple(views))
-        self._zero_views = tuple(groups)
+        groups = tuple(group.layer_names for group in self.projected.kv_cache_groups)
+        self._zero_views = resident_zero_views(
+            self._raw, groups, (self.pages.logical_capacity,) * len(groups))
 
     def zero(self, logical_ids):
         if not logical_ids:
