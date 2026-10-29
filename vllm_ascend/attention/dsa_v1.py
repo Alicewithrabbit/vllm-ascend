@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 
 import torch
@@ -2271,6 +2272,7 @@ class AscendDSAImpl(DSAAttentionImpl):
             (swa_metadata,) = attn_metadata
             compress_common_attn_metadata = swa_metadata
         common_decode_metadata = _require_decode_metadata(compress_common_attn_metadata)
+        avsg_decode = getattr(compress_common_attn_metadata, "avsg_decode", None) if self.compress_ratio == 4 else None
         swa_decode_metadata = _require_decode_metadata(swa_metadata)
         cos = common_decode_metadata.cos[layer_name]
         sin = common_decode_metadata.sin[layer_name]
@@ -2449,7 +2451,10 @@ class AscendDSAImpl(DSAAttentionImpl):
             # A zero-row compressor output has no KV writes. Skip scatter
             # instead of passing None; A5 scatter dereferences x.view().
             if compressed_kv.shape[0] > 0:
-                DeviceOperator.dsa_kv_compress_scatter(compress_kv_cache, compressed_kv, compress_slot_mapping)
+                if avsg_decode is not None:
+                    avsg_decode.write(layer_name, compressed_kv)
+                else:
+                    DeviceOperator.dsa_kv_compress_scatter(compress_kv_cache, compressed_kv, compress_slot_mapping)
 
             if self.multistream_dsv4_dsa_overlap and self.compress_ratio == 4 and not self.skip_topk:
                 # Wait aux_stream weights_proj done
@@ -2490,6 +2495,9 @@ class AscendDSAImpl(DSAAttentionImpl):
         record_attention_compute_start()
         attn_op = DeviceOperator.get_dsa_sparse_attn_op()
         extra_attn_kwargs: dict = DeviceOperator.get_dsa_sparse_attn_base_kwargs()
+
+        if avsg_decode is not None:
+            attn_op = partial(avsg_decode.attention, layer_name, attn_op)
 
         if self.compress_ratio <= 1:
             if swa_decode_metadata.dspark_swa_indices is not None:
