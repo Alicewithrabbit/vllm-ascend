@@ -1,16 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Huawei Technologies Co., Ltd. All Rights Reserved.
 """Capacity planning without initializing the NPU plugin or a scheduler."""
-import importlib.util
-from pathlib import Path
+import importlib
 from types import SimpleNamespace as NS
 import unittest
 
 
-source = Path(__file__).resolve().parents[3] / "vllm_ascend/kv_offload/avsg_adapter/native_admission.py"
-spec = importlib.util.spec_from_file_location("avsg_native_admission_test", source)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+module = importlib.import_module("omni_cache.v2.avsg.ascend_adapter.native_admission")
 
 
 def planner(host_free, host_domains=(0, 0), physical_free=10):
