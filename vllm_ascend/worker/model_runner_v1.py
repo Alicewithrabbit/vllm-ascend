@@ -165,6 +165,7 @@ from vllm_ascend.utils import (
     set_potential_max_tokens,
     should_skip_allreduce_across_dp_group,
 )
+from vllm_ascend import envs as ascend_envs
 from vllm_ascend.worker.dcp_utils import DCPAsyncSpecDecodeRebuildResult, DCPManager
 from vllm_ascend.worker.npu_input_batch import NPUInputBatch
 from vllm_ascend.worker.utils import AscendKVBlockZeroer
@@ -433,9 +434,14 @@ class NPUModelRunner(GPUModelRunner):
         # Backends that consume CPU seq_lens (AscendAttentionBackend,
         # AscendMLABackend, and DSV4 compressed attention metadata) need
         # ``optimistic_seq_lens_cpu`` to match the corrected GPU seq_lens
-        # in async spec decode mode; others (SFA, GDN, etc.) do not.
+        # in async spec decode mode. The external GLM Host binding also needs
+        # these exact lengths even though native SFA consumes Device lengths.
         self._needs_seq_lens_cpu_sync = self.use_compress or issubclass(
             self.attn_backend, (AscendAttentionBackend, AscendMLABackend)
+        ) or (
+            ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned"
+            and vllm_config.kv_transfer_config is not None
+            and vllm_config.kv_transfer_config.is_kv_consumer
         )
 
         # kv role
@@ -1270,7 +1276,17 @@ class NPUModelRunner(GPUModelRunner):
         else:
             attn_state = AscendAttentionState.PrefillCacheHit
 
-        if attn_state == AscendAttentionState.SpecDecoding and self.speculative_config.method != "mtp":
+        if (
+            ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned"
+            and self.input_batch.num_reqs > 0
+            and attn_state not in (AscendAttentionState.DecodeOnly, AscendAttentionState.SpecDecoding)
+        ):
+            from vllm_ascend.kv_offload.avsg_adapter.owned_runner import replay_attention_state
+
+            attn_state = replay_attention_state(self, num_reqs, num_scheduled_tokens)
+
+        if (attn_state == AscendAttentionState.SpecDecoding and self.speculative_config.method != "mtp"
+                and ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER != "avsg-owned"):
             self.attn_state = AscendAttentionState.ChunkedPrefill  # type: ignore
         else:
             self.attn_state = attn_state  # type: ignore
@@ -2260,7 +2276,17 @@ class NPUModelRunner(GPUModelRunner):
             # forward when speculative decoding is enabled. Finalize here after
             # draft model runs so KV pool save/put can complete.
             if self.speculative_config is not None:
-                self.finalize_kv_connector()
+                if ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned":
+                    from vllm_ascend.kv_offload.avsg_adapter.owned_runner import finish_step
+
+                    finish_step(self, self.finalize_kv_connector)
+                else:
+                    self.finalize_kv_connector()
+                if (ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned"
+                        and self.is_kv_consumer and has_kv_transfer_group()):
+                    from vllm_ascend.kv_offload.avsg_adapter.native_connector import collect_model_reports
+
+                    collect_model_reports(get_kv_transfer_group(), kv_connector_output)
 
             draft_token_ids = self._draft_token_ids if use_pp_spec_decode else None
             if draft_token_ids is not None:
@@ -2602,6 +2628,10 @@ class NPUModelRunner(GPUModelRunner):
             **model_kwargs,
         }
         run_model = partial(self.model, **model_inputs)
+        if ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned":
+            from vllm_ascend.kv_offload.avsg_adapter.owned_runner import model_forward
+
+            run_model = partial(model_forward, self, forward_context, run_model, num_tokens_padded)
 
         if self.enable_enpu:
             # The soft segmentation scenario requires event.record first, then event.wait
@@ -3566,6 +3596,8 @@ class NPUModelRunner(GPUModelRunner):
             kv_cache_config: Configuration for the KV cache, including the KV
             cache size of each layer
         """
+        if ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned" and self.is_kv_consumer:
+            get_kv_transfer_group().prepare_avsg_worker(self, kv_cache_config)
         kv_cache_config = deepcopy(kv_cache_config)
         self.kv_cache_config = kv_cache_config
         self._mamba_bufs = None
@@ -3640,7 +3672,12 @@ class NPUModelRunner(GPUModelRunner):
             logger.debug("%s reuses KV cache of %s", layer_name, target_layer_name)
             kv_caches[layer_name] = kv_caches[target_layer_name]
 
-        if self.model_config.hf_text_config.model_type == "deepseek_v4":
+        owned = getattr(self, "_avsg_owned_worker", None)
+        if owned is None:
+            owned = getattr(self, "_avsg_native_storage", None)
+        compressed = (owned.profile.compression != 1 if owned is not None
+                      else self.model_config.hf_text_config.model_type == "deepseek_v4")
+        if compressed:
             from vllm_ascend.utils import extract_dsv4_layer_index
 
             assert len(self.kv_caches) == 0

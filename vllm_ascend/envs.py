@@ -25,9 +25,19 @@ from typing import Any
 # The begin-* and end* here are used by the documentation generator
 # to extract the used env vars.
 
+def _avsg_host_provider():
+    value = os.getenv("VLLM_ASCEND_AVSG_HOST_PROVIDER", "legacy")
+    if value not in ("legacy", "avsg-owned"):
+        raise ValueError("AVSG Host provider must be legacy or avsg-owned")
+    return value
+
+
 # begin-env-vars-definition
 
 env_variables: dict[str, Callable[[], Any]] = {
+    # Startup-only, non-sensitive: legacy (native default) or avsg-owned.
+    # Change only by restarting workers with the paired adapter package.
+    "VLLM_ASCEND_AVSG_HOST_PROVIDER": lambda: _avsg_host_provider(),
     # max compile thread number for package building. Usually, it is set to
     # the number of CPU cores. If not set, the default value is None, which
     # means all number of CPU cores will be used.

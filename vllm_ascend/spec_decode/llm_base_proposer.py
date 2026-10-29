@@ -41,6 +41,7 @@ from vllm.v1.spec_decode.utils import (
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 
 from vllm_ascend.ascend_config import get_ascend_config
+from vllm_ascend import envs as ascend_envs
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX, set_ascend_forward_context
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
@@ -702,7 +703,7 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             if forward_context is not None:
                 forward_context.moe_layer_index = 0
 
-            self._runnable(
+            run_draft = partial(self._runnable,
                 num_input_tokens=num_tokens,
                 batch_size=batch_size,
                 token_indices_to_sample=self.token_indices_to_sample[: batch_size * self.extra_slots_per_request],
@@ -712,6 +713,12 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 multi_steps_attn_metadata=multi_steps_attn_metadata,
                 num_tokens=num_tokens,
             )
+            if ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned":
+                from vllm_ascend.kv_offload.avsg_adapter.owned_runner import draft_forward
+
+                run_draft = partial(draft_forward, self, forward_context, run_draft,
+                                    multi_steps_attn_metadata, dummy=True)
+            run_draft()
             forward_context = get_forward_context()
             if forward_context.cudagraph_runtime_mode == CUDAGraphMode.FULL and not _EXTRA_CTX.capturing:
                 self._update_full_graph_params(forward_context, num_tokens, multi_steps_attn_metadata)
@@ -1005,6 +1012,11 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             }
             runnable = cast(Callable[..., Any], self._runnable)
             run_draft: Callable[[], Any] = partial(runnable, **model_inputs)
+            if ascend_envs.VLLM_ASCEND_AVSG_HOST_PROVIDER == "avsg-owned":
+                from vllm_ascend.kv_offload.avsg_adapter.owned_runner import draft_forward
+
+                run_draft = partial(draft_forward, self, forward_context, run_draft,
+                                    multi_steps_attn_metadata)
 
             if self.enable_enpu:
                 self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
