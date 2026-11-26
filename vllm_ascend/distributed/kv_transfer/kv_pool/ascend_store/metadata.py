@@ -1276,6 +1276,8 @@ class LayerTransferTask:
     use_key_major_ranges: bool = False
     # Group-local completion differs from the physical model layer boundary.
     final_group_layer: bool = False
+    # Finalize all GVA reads for the step after the last actual copy.
+    load_finish_metadata: tuple[list[str], set[str]] | None = None
 
 
 @dataclass

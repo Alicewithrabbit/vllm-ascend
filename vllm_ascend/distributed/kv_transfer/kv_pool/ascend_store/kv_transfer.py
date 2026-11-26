@@ -2133,7 +2133,6 @@ class KVCacheStoreLayerRecvingThread(KVTransferThread):
                 logger.info("Layerwise %d load waits for attention compute start", layer_id)
 
         all_load_keys: list[str] = []
-        all_req_ids: set[str] = set()
         last_chunk_req_ids: set[str] = set()
         all_gvas = []
         all_addrs = []
@@ -2142,7 +2141,6 @@ class KVCacheStoreLayerRecvingThread(KVTransferThread):
             if req_meta.load_keys:
                 all_load_keys.extend(req_meta.load_keys)
             for req_id, is_last_chunk in zip(req_meta.req_ids, req_meta.is_last_chunks):
-                all_req_ids.add(req_id)
                 if is_last_chunk:
                     last_chunk_req_ids.add(req_id)
             all_gvas.append(req_meta.gvas_array)
@@ -2174,7 +2172,13 @@ class KVCacheStoreLayerRecvingThread(KVTransferThread):
         if res != 0:
             raise RuntimeError(f"Layerwise {layer_id} load batch_copy failed with return code {res}")
 
-        if layer_id == self.final_layer_id and all_load_keys:
+        finish_load = layer_id == self.final_layer_id
+        for task, _ in task_metas:
+            if task.load_finish_metadata is not None:
+                all_load_keys, last_chunk_req_ids = task.load_finish_metadata
+                finish_load = True
+                break
+        if finish_load and all_load_keys:
             unique_load_keys = list(dict.fromkeys(all_load_keys))
             self.m_store.batch_remove_lease(unique_load_keys)
             logger.debug(
@@ -2182,10 +2186,9 @@ class KVCacheStoreLayerRecvingThread(KVTransferThread):
                 len(unique_load_keys),
                 layer_id,
             )
-        if layer_id == self.final_layer_id:
-            for req_id in all_req_ids:
-                if req_id in last_chunk_req_ids:
-                    self.set_finished_request(req_id)
+        if finish_load:
+            for req_id in last_chunk_req_ids:
+                self.set_finished_request(req_id)
         assert not self.layer_load_finished_events[layer_id].is_set(), f"thread: {layer_id} load failed "
         logger.debug("Layer load event set: layer %d", layer_id)
         self.layer_load_finished_events[layer_id].set()

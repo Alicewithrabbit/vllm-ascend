@@ -358,6 +358,21 @@ class TestGVALayerReceivingTaskOwnership(unittest.TestCase):
 
         self.assertEqual(transfer_tasks, [task])
 
+    def test_last_actual_read_finishes_requests_from_earlier_layers(self):
+        thread, _, _, _ = self._make_thread()
+        thread.set_finished_request = MagicMock()
+        task = LayerTransferTask(
+            layer_id=0,
+            block_ranges=[],
+            shared_block_data=SharedBlockData(np.asarray([0]), np.asarray([100]), ["r1"], [False]),
+            load_finish_metadata=(["k0", "k1", "k0"], {"r0"}),
+        )
+        data = LayerLoadTask(None, [task], layer_id=0)
+        thread.request_queue.put(data)
+        thread._handle_request(data)
+        thread.m_store.batch_remove_lease.assert_called_once_with(["k0", "k1"])
+        thread.set_finished_request.assert_called_once_with("r0")
+
     def test_empty_reuse_gate_waits_for_non_saving_rank_compute(self):
         thread, load_finished, save_finished, sync_events = self._make_thread()
         save_finished[0].set()
